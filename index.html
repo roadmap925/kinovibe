@@ -43,19 +43,31 @@
     <!-- Основний контент -->
     <main class="max-w-4xl mx-auto px-4 py-12">
         <div class="bg-slate-800/50 p-8 rounded-3xl border border-slate-700 shadow-xl">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                <!-- Рік -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                <!-- Точний рік -->
                 <div>
                     <label class="block text-sm font-medium mb-2 text-slate-400">Рік виходу</label>
                     <select id="year-select" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition-all">
-                        <option value="">Будь-який рік</option>
+                        <option value="">Будь-який</option>
                     </select>
+                </div>
+                <!-- Діапазон років -->
+                <div>
+                    <label class="block text-sm font-medium mb-2 text-slate-400">Роки від — до</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <select id="year-from" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition-all">
+                            <option value="">Від</option>
+                        </select>
+                        <select id="year-to" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition-all">
+                            <option value="">До</option>
+                        </select>
+                    </div>
                 </div>
                 <!-- Жанр -->
                 <div>
                     <label class="block text-sm font-medium mb-2 text-slate-400">Жанр</label>
                     <select id="genre-select" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none transition-all">
-                        <option value="">Будь-який жанр</option>
+                        <option value="">Будь-який</option>
                         <option>Комедія</option>
                         <option>Драма</option>
                         <option>Фантастика</option>
@@ -69,11 +81,19 @@
             </div>
 
             <!-- Побажання -->
-            <div class="mb-8">
+            <div class="mb-4">
                 <label class="block text-sm font-medium mb-2 text-slate-400">Ваші побажання *</label>
                 <textarea id="wishes-input" placeholder="Наприклад: атмосферне кіно про хакерів або неонуарний детектив з несподіваним фіналом..." 
                     class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 h-32 focus:ring-2 focus:ring-blue-500 outline-none transition-all resize-none"></textarea>
             </div>
+
+            <!-- Чекбокс української озвучки -->
+            <label class="flex items-center gap-3 mb-8 cursor-pointer select-none group">
+                <input type="checkbox" id="uafix-check" class="w-5 h-5 accent-blue-600 cursor-pointer">
+                <span class="text-sm text-slate-300 group-hover:text-white transition-colors">
+                    🇺🇦 Тільки з українською озвучкою <span class="text-slate-500">(перевірка наявності на UAfix)</span>
+                </span>
+            </label>
 
             <button onclick="findMovies()" id="search-btn" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-900/20 transition-all active:scale-[0.98]">
                 Підібрати фільми
@@ -86,7 +106,7 @@
         <!-- Індикатор завантаження -->
         <div id="loading-area" class="hidden flex flex-col items-center justify-center mt-20">
             <div class="loader mb-4"></div>
-            <p class="text-slate-400 animate-pulse">ШІ аналізує ваші вподобання...</p>
+            <p id="loading-text" class="text-slate-400 animate-pulse">ШІ аналізує ваші вподобання...</p>
         </div>
 
         <!-- Результати -->
@@ -181,12 +201,18 @@
     <script>
         // ============================================================
         // ЗАШИФРОВАНІ КЛЮЧІ
-        // Згенеруйте блок у keygen.html і вставте сюди замість порожнього рядка.
-        // Формат: Base64( salt 16 байт + IV 12 байт + AES-GCM шифротекст ).
-        // Без пароля цей блок розшифрувати неможливо, тож його безпечно
-        // публікувати на GitHub.
+        // Замініть рядок нижче на ваш рядок з keygen.html.
+        // Має бути рівно ОДНА декларація const ENCRYPTED_KEYS.
         // ============================================================
         const ENCRYPTED_KEYS = "lU4Hj/R0ZDu57fkxaGHjo9z9mtecDb5hyOPPNOD01SfgfH8JhL82cWSk7OZ0G+iZfhSuoyiEf6hmiR6oSSmM7d/9CiraupsphTRNcUjmBxNul2PJBAs5yqJLS/aBJsHjB0v6CouRViAUGvSMH2b/O//vtnGYbBTtVYn+b379FJjLBaHYkZRjw/WHhU3glKwBTSiocufc6t4QUAQxFGUQUtKzL2yfb9IXkKoPdFJTQw==";
+
+        // ============================================================
+        // Перевірка наявності на UAfix
+        // uafix.net не віддає CORS-заголовки, тому запити йдуть через
+        // публічний CORS-проксі allorigins.win
+        // ============================================================
+        const UAFIX_PROXY = 'https://api.allorigins.win/raw?url=';
+        const UAFIX_SEARCH = 'https://uafix.net/index.php?do=search&subaction=search&story=';
 
         // ============================================================
         // Конфігурація провайдерів ШІ
@@ -263,22 +289,39 @@
         const shownTitles = new Set();
 
         const yearSelect = document.getElementById('year-select');
+        const yearFromSelect = document.getElementById('year-from');
+        const yearToSelect = document.getElementById('year-to');
         const settingsModal = document.getElementById('settings-modal');
         const unlockModal = document.getElementById('unlock-modal');
         const resultsGrid = document.getElementById('results-grid');
         const loader = document.getElementById('loading-area');
+        const loadingText = document.getElementById('loading-text');
 
-        // Заповнюємо роки
+        // Заповнюємо всі три списки років (точний рік + від + до)
         for (let year = 2026; year >= 1960; year--) {
-            const opt = document.createElement('option');
-            opt.value = year;
-            opt.textContent = year;
-            yearSelect.appendChild(opt);
+            for (const sel of [yearSelect, yearFromSelect, yearToSelect]) {
+                const opt = document.createElement('option');
+                opt.value = year;
+                opt.textContent = year;
+                sel.appendChild(opt);
+            }
+        }
+
+        // Точний рік і діапазон — взаємовиключні
+        yearSelect.addEventListener('change', () => {
+            if (yearSelect.value) {
+                yearFromSelect.value = '';
+                yearToSelect.value = '';
+            }
+        });
+        for (const sel of [yearFromSelect, yearToSelect]) {
+            sel.addEventListener('change', () => {
+                if (sel.value) yearSelect.value = '';
+            });
         }
 
         // ============================================================
         // Криптографія: розшифрування ключів за паролем
-        // AES-256-GCM + PBKDF2 (310 000 ітерацій SHA-256)
         // ============================================================
         const enc = new TextEncoder();
         const dec = new TextDecoder();
@@ -304,7 +347,6 @@
             const iv = data.slice(16, 28);
             const ciphertext = data.slice(28);
             const key = await deriveKey(password, salt);
-            // Якщо пароль невірний, AES-GCM кине виняток — це і є перевірка
             const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
             return JSON.parse(dec.decode(plain));
         }
@@ -319,8 +361,6 @@
 
             try {
                 const keys = await decryptKeys(password);
-                // Записуємо розшифровані ключі в localStorage —
-                // пароль більше не знадобиться на цьому пристрої
                 localStorage.setItem('kv_provider', keys.provider || 'groq');
                 localStorage.setItem('kv_key_omdb', keys.omdb || '');
                 localStorage.setItem('kv_key_groq', keys.groq || '');
@@ -337,7 +377,6 @@
             }
         }
 
-        // Перехід до ручного введення ключів (для тих, хто не знає пароль)
         function manualKeys() {
             unlockModal.classList.add('hidden');
             settingsModal.classList.remove('hidden');
@@ -359,8 +398,6 @@
             loadSettingsToForm();
             updateStatus();
 
-            // Якщо є зашифрований блок і ключі ще не налаштовані —
-            // показуємо вікно з паролем
             const hasKeys = localStorage.getItem('kv_key_omdb');
             if (ENCRYPTED_KEYS && !hasKeys) {
                 unlockModal.classList.remove('hidden');
@@ -372,7 +409,6 @@
             settingsModal.classList.toggle('hidden');
         }
 
-        // Підсвічуємо поле ключа активного провайдера, решту притемнюємо
         function onProviderChange() {
             const selected = document.getElementById('provider-select').value;
             for (const id of Object.keys(PROVIDERS)) {
@@ -412,8 +448,61 @@
         }
 
         // ============================================================
+        // Формування критерію років
+        // ============================================================
+        function buildYearCriteria() {
+            const year = yearSelect.value;
+            let from = yearFromSelect.value;
+            let to = yearToSelect.value;
+
+            if (year) return year;
+
+            if (from && to && parseInt(from) > parseInt(to)) {
+                [from, to] = [to, from];
+                yearFromSelect.value = from;
+                yearToSelect.value = to;
+            }
+
+            if (from && to) return `від ${from} до ${to} року включно`;
+            if (from) return `${from} рік або новіші`;
+            if (to) return `${to} рік або старіші`;
+            return 'Будь-який';
+        }
+
+        // ============================================================
+        // Перевірка одного фільму на UAfix
+        // Шукаємо за англійською назвою; результати DLE-пошуку містять
+        // посилання формату <a href="..." title="Смотреть НАЗВИ онлайн">,
+        // де серед НАЗВ є і англійська — за нею і звіряємо.
+        // Повертає: URL сторінки фільму | false (немає) | null (перевірка не вдалася)
+        // ============================================================
+        async function checkUafix(englishTitle) {
+            try {
+                const searchUrl = UAFIX_SEARCH + encodeURIComponent(englishTitle);
+                const res = await fetch(UAFIX_PROXY + encodeURIComponent(searchUrl));
+                if (!res.ok) return null;
+                const html = await res.text();
+
+                const wanted = englishTitle.toLowerCase();
+                const linkRe = /<a\s+[^>]*href="(https?:\/\/uafix\.net\/[^"]+)"[^>]*title="Смотреть ([^"]+) онлайн"/gi;
+                let match;
+                while ((match = linkRe.exec(html)) !== null) {
+                    // У title перелічені всі назви через " / " — звіряємо кожну повністю,
+                    // щоб "Alien" не спрацьовував на "Aliens" чи "Alien 3"
+                    const variants = match[2].split('/').map(v => v.trim().toLowerCase());
+                    if (variants.includes(wanted)) {
+                        return match[1]; // пряме посилання на сторінку фільму
+                    }
+                }
+                return false;
+            } catch (e) {
+                console.warn(`UAfix: не вдалося перевірити "${englishTitle}"`, e);
+                return null;
+            }
+        }
+
+        // ============================================================
         // Видобування JSON з відповіді моделі
-        // Працює навіть якщо модель додала текст чи backticks навколо JSON
         // ============================================================
         function extractJson(text) {
             const cleaned = text.replace(/```json|```/g, '').trim();
@@ -433,11 +522,11 @@
             const provider = getActiveProvider();
             const aiKey = localStorage.getItem(provider.storageKey);
             const wishes = document.getElementById('wishes-input').value.trim();
-            const year = document.getElementById('year-select').value;
             const genre = document.getElementById('genre-select').value;
+            const yearCriteria = buildYearCriteria();
+            const uafixOnly = document.getElementById('uafix-check').checked;
 
             if (!omdbKey || !aiKey) {
-                // Якщо є зашифрований блок — пропонуємо пароль, інакше ручне введення
                 if (ENCRYPTED_KEYS) {
                     unlockModal.classList.remove('hidden');
                 } else {
@@ -452,23 +541,28 @@
                 return;
             }
 
-            // Блокуємо кнопку на час запиту
             const searchBtn = document.getElementById('search-btn');
             searchBtn.disabled = true;
             searchBtn.classList.add('opacity-50', 'cursor-not-allowed');
             resultsGrid.innerHTML = '';
+            loadingText.textContent = 'ШІ аналізує ваші вподобання...';
             loader.classList.remove('hidden');
             window.scrollTo({ top: loader.offsetTop - 100, behavior: 'smooth' });
 
             try {
-                // Список виключень — щоб повторний пошук не дублював попередні підбірки
                 const exclusions = [...shownTitles].slice(-60);
                 const exclusionText = exclusions.length
                     ? `\nВАЖЛИВО: НЕ пропонуй ці фільми, вони вже були показані: ${exclusions.join('; ')}.`
                     : '';
 
-                const prompt = `Підбери 16 фільмів, які ідеально відповідають цим критеріям користувача (врахуй рік і жанр, якщо вказані).
-Критерії: Рік: ${year || 'Будь-який'}, Жанр: ${genre || 'Будь-який'}, Побажання: ${wishes}.${exclusionText}
+                // Із фільтром озвучки просимо більше фільмів — частина відсіється
+                const count = uafixOnly ? 24 : 16;
+                const popularityHint = uafixOnly
+                    ? '\nВіддавай перевагу відомим і популярним фільмам — вони найімовірніше мають українську озвучку.'
+                    : '';
+
+                const prompt = `Підбери ${count} фільмів, які ідеально відповідають цим критеріям користувача (суворо дотримуйся років і жанру, якщо вказані).
+Критерії: Роки виходу: ${yearCriteria}, Жанр: ${genre || 'Будь-який'}, Побажання: ${wishes}.${exclusionText}${popularityHint}
 Поверни СУТО JSON-об'єкт з ключем "movies" — масивом об'єктів. Кожен об'єкт має містити два ключі: "title" (точна офіційна англійська назва для пошуку в базі) та "plot" (цікавий і детальний опис фільму УКРАЇНСЬКОЮ мовою, 3-4 речення).
 Приклад: {"movies": [{"title": "The Matrix", "plot": "Культовий фільм про хакера Нео..."}]}
 Жодного тексту поза JSON.`;
@@ -485,7 +579,7 @@
                     throw new Error("ШІ не знайшов фільмів за цими критеріями. Спробуйте переформулювати побажання.");
                 }
 
-                // Отримуємо дані OMDb для кожного фільму паралельно
+                // Дані OMDb для кожного фільму паралельно
                 const movieDataPromises = movieSuggestions.map(async (movie) => {
                     try {
                         const oResponse = await fetch(`https://www.omdbapi.com/?apikey=${omdbKey}&t=${encodeURIComponent(movie.title)}`);
@@ -494,7 +588,7 @@
                         if (oData.Response === "True") {
                             return {
                                 ...oData,
-                                customPlot: movie.plot, // Опис українською від ШІ
+                                customPlot: movie.plot,
                                 imdbRating: parseFloat(oData.imdbRating) || 0
                             };
                         }
@@ -506,7 +600,7 @@
 
                 let results = (await Promise.all(movieDataPromises)).filter(m => m !== null);
 
-                // Прибираємо дублікати за imdbID
+                // Дублікати за imdbID
                 const seen = new Set();
                 results = results.filter(m => {
                     if (seen.has(m.imdbID)) return false;
@@ -514,13 +608,31 @@
                     return true;
                 });
 
-                // Запам'ятовуємо показані фільми для наступних пошуків
-                results.forEach(m => shownTitles.add(m.Title));
+                // ------------------------------------------------------
+                // Перевірка української озвучки на UAfix (якщо увімкнено)
+                // ------------------------------------------------------
+                if (uafixOnly && results.length > 0) {
+                    loadingText.textContent = 'Перевіряю наявність озвучки на UAfix...';
 
-                // Сортування за рейтингом IMDb
+                    const checks = await Promise.all(results.map(m => checkUafix(m.Title)));
+                    results.forEach((m, i) => { m.uafixUrl = checks[i]; });
+
+                    const failedChecks = checks.filter(c => c === null).length;
+
+                    if (failedChecks === checks.length) {
+                        // Проксі повністю недоступне — показуємо все без фільтра
+                        alert("Не вдалося перевірити наявність на UAfix (сервіс перевірки недоступний). Показую підбірку без фільтра озвучки.");
+                        results.forEach(m => { m.uafixUrl = null; });
+                    } else {
+                        // Залишаємо тільки знайдені на UAfix
+                        results = results.filter(m => typeof m.uafixUrl === 'string');
+                    }
+                }
+
+                results.forEach(m => shownTitles.add(m.Title));
                 results.sort((a, b) => b.imdbRating - a.imdbRating);
 
-                renderCards(results);
+                renderCards(results, uafixOnly);
 
                 if (results.length > 0) {
                     document.getElementById('repeat-hint').classList.remove('hidden');
@@ -538,9 +650,11 @@
         // ============================================================
         // Рендеринг карток
         // ============================================================
-        function renderCards(movies) {
+        function renderCards(movies, uafixOnly) {
             if (movies.length === 0) {
-                resultsGrid.innerHTML = '<p class="col-span-full text-center text-slate-500">Нічого не знайдено. Спробуйте змінити запит.</p>';
+                resultsGrid.innerHTML = uafixOnly
+                    ? '<p class="col-span-full text-center text-slate-500">На UAfix не знайдено жодного з підібраних фільмів. Спробуйте вимкнути фільтр озвучки або змінити запит.</p>'
+                    : '<p class="col-span-full text-center text-slate-500">Нічого не знайдено. Спробуйте змінити запит.</p>';
                 return;
             }
 
@@ -552,6 +666,10 @@
                              onerror="this.src='${NO_POSTER}'"
                              loading="lazy"
                              class="w-full h-full object-cover">
+                        ${typeof movie.uafixUrl === 'string' ? `
+                        <div class="absolute top-3 left-3 bg-green-600/90 backdrop-blur-md px-2 py-1 rounded-lg text-white font-bold text-xs">
+                            🇺🇦 Озвучка
+                        </div>` : ''}
                         <div class="absolute top-3 right-3 bg-black/60 backdrop-blur-md px-2 py-1 rounded-lg text-yellow-400 font-bold text-sm flex items-center gap-1">
                             ⭐ ${movie.imdbRating || '—'}
                         </div>
@@ -563,6 +681,11 @@
                             ${movie.customPlot}
                         </p>
                         <div class="space-y-2 mt-auto">
+                            ${typeof movie.uafixUrl === 'string' ? `
+                            <a href="${movie.uafixUrl}" target="_blank" 
+                               class="block w-full text-center bg-green-700 hover:bg-green-600 text-white text-xs font-semibold py-2 rounded-lg transition-colors">
+                               ▶ Дивитись на UAfix
+                            </a>` : ''}
                             <a href="https://www.imdb.com/title/${movie.imdbID}/" target="_blank" 
                                class="block w-full text-center bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold py-2 rounded-lg transition-colors">
                                Детальніше на IMDb
