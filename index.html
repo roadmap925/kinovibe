@@ -41,8 +41,8 @@
     </header>
 
     <!-- Основний контент -->
-    <main class="max-w-4xl mx-auto px-4 py-12">
-        <div class="bg-slate-800/50 p-8 rounded-3xl border border-slate-700 shadow-xl">
+    <main class="max-w-5xl mx-auto px-4 py-12">
+        <div class="bg-slate-800/50 p-8 rounded-3xl border border-slate-700 shadow-xl max-w-4xl mx-auto">
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
                 <!-- Точний рік -->
                 <div>
@@ -109,8 +109,8 @@
             <p id="loading-text" class="text-slate-400 animate-pulse">ШІ аналізує ваші вподобання...</p>
         </div>
 
-        <!-- Результати -->
-        <div id="results-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mt-16">
+        <!-- Результати: 3 широкі колонки замість 4 вузьких -->
+        <div id="results-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-16">
             <!-- Картки з'являться тут -->
         </div>
     </main>
@@ -200,19 +200,44 @@
 
     <script>
         // ============================================================
-        // ЗАШИФРОВАНІ КЛЮЧІ
-        // Замініть рядок нижче на ваш рядок з keygen.html.
+        // ЗАШИФРОВАНІ КЛЮЧІ — замініть рядок нижче на ваш з keygen.html
         // Має бути рівно ОДНА декларація const ENCRYPTED_KEYS.
         // ============================================================
         const ENCRYPTED_KEYS = "lU4Hj/R0ZDu57fkxaGHjo9z9mtecDb5hyOPPNOD01SfgfH8JhL82cWSk7OZ0G+iZfhSuoyiEf6hmiR6oSSmM7d/9CiraupsphTRNcUjmBxNul2PJBAs5yqJLS/aBJsHjB0v6CouRViAUGvSMH2b/O//vtnGYbBTtVYn+b379FJjLBaHYkZRjw/WHhU3glKwBTSiocufc6t4QUAQxFGUQUtKzL2yfb9IXkKoPdFJTQw==";
 
         // ============================================================
-        // Перевірка наявності на UAfix
-        // uafix.net не віддає CORS-заголовки, тому запити йдуть через
-        // публічний CORS-проксі allorigins.win
+        // Перевірка наявності на UAfix через ланцюжок CORS-проксі
         // ============================================================
-        const UAFIX_PROXY = 'https://api.allorigins.win/raw?url=';
         const UAFIX_SEARCH = 'https://uafix.net/index.php?do=search&subaction=search&story=';
+        const CORS_PROXIES = [
+            url => 'https://corsproxy.io/?url=' + encodeURIComponent(url),
+            url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
+            url => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url)
+        ];
+        const UAFIX_TIMEOUT_MS = 8000;
+        const UAFIX_CONCURRENCY = 6;
+
+        // Кеш перевірок у межах сесії
+        const uafixCache = new Map();
+
+        // ============================================================
+        // Переклад жанрів OMDb українською
+        // ============================================================
+        const GENRE_UA = {
+            'Comedy': 'Комедія', 'Drama': 'Драма', 'Sci-Fi': 'Фантастика',
+            'Action': 'Бойовик', 'Horror': 'Жахи', 'Thriller': 'Трилер',
+            'Mystery': 'Детектив', 'Animation': 'Мультфільм', 'Crime': 'Кримінал',
+            'Adventure': 'Пригоди', 'Romance': 'Мелодрама', 'Fantasy': 'Фентезі',
+            'Documentary': 'Документальний', 'Family': 'Сімейний', 'Biography': 'Біографія',
+            'History': 'Історичний', 'War': 'Воєнний', 'Western': 'Вестерн',
+            'Music': 'Музичний', 'Musical': 'Мюзикл', 'Sport': 'Спортивний',
+            'Short': 'Короткометражний', 'Film-Noir': 'Нуар'
+        };
+
+        function translateGenre(genreStr) {
+            const first = (genreStr || '').split(',')[0].trim();
+            return GENRE_UA[first] || first;
+        }
 
         // ============================================================
         // Конфігурація провайдерів ШІ
@@ -282,10 +307,9 @@
             }
         };
 
-        // via.placeholder.com більше не працює — використовуємо placehold.co
         const NO_POSTER = 'https://placehold.co/300x450/1e293b/64748b?text=No+Poster';
 
-        // Фільми, вже показані в цій сесії — щоб повторний пошук давав нові
+        // Фільми, вже показані в цій сесії
         const shownTitles = new Set();
 
         const yearSelect = document.getElementById('year-select');
@@ -297,7 +321,7 @@
         const loader = document.getElementById('loading-area');
         const loadingText = document.getElementById('loading-text');
 
-        // Заповнюємо всі три списки років (точний рік + від + до)
+        // Заповнюємо всі три списки років
         for (let year = 2026; year >= 1960; year--) {
             for (const sel of [yearSelect, yearFromSelect, yearToSelect]) {
                 const opt = document.createElement('option');
@@ -470,35 +494,70 @@
         }
 
         // ============================================================
-        // Перевірка одного фільму на UAfix
-        // Шукаємо за англійською назвою; результати DLE-пошуку містять
-        // посилання формату <a href="..." title="Смотреть НАЗВИ онлайн">,
-        // де серед НАЗВ є і англійська — за нею і звіряємо.
-        // Повертає: URL сторінки фільму | false (немає) | null (перевірка не вдалася)
+        // Службові функції для мережевих запитів
+        // ============================================================
+        async function fetchWithTimeout(url, ms) {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), ms);
+            try {
+                return await fetch(url, { signal: ctrl.signal });
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+
+        async function mapLimit(items, limit, fn) {
+            const results = new Array(items.length);
+            let index = 0;
+            async function worker() {
+                while (index < items.length) {
+                    const i = index++;
+                    results[i] = await fn(items[i], i);
+                }
+            }
+            const workers = Array.from({ length: Math.min(limit, items.length) }, worker);
+            await Promise.all(workers);
+            return results;
+        }
+
+        // ============================================================
+        // Перевірка одного фільму на UAfix через ланцюжок проксі
+        // Повертає: URL сторінки | false (немає) | null (перевірка не вдалася)
         // ============================================================
         async function checkUafix(englishTitle) {
-            try {
-                const searchUrl = UAFIX_SEARCH + encodeURIComponent(englishTitle);
-                const res = await fetch(UAFIX_PROXY + encodeURIComponent(searchUrl));
-                if (!res.ok) return null;
-                const html = await res.text();
-
-                const wanted = englishTitle.toLowerCase();
-                const linkRe = /<a\s+[^>]*href="(https?:\/\/uafix\.net\/[^"]+)"[^>]*title="Смотреть ([^"]+) онлайн"/gi;
-                let match;
-                while ((match = linkRe.exec(html)) !== null) {
-                    // У title перелічені всі назви через " / " — звіряємо кожну повністю,
-                    // щоб "Alien" не спрацьовував на "Aliens" чи "Alien 3"
-                    const variants = match[2].split('/').map(v => v.trim().toLowerCase());
-                    if (variants.includes(wanted)) {
-                        return match[1]; // пряме посилання на сторінку фільму
-                    }
-                }
-                return false;
-            } catch (e) {
-                console.warn(`UAfix: не вдалося перевірити "${englishTitle}"`, e);
-                return null;
+            if (uafixCache.has(englishTitle)) {
+                return uafixCache.get(englishTitle);
             }
+
+            const searchUrl = UAFIX_SEARCH + encodeURIComponent(englishTitle);
+            const wanted = englishTitle.toLowerCase();
+
+            for (const proxyWrap of CORS_PROXIES) {
+                try {
+                    const res = await fetchWithTimeout(proxyWrap(searchUrl), UAFIX_TIMEOUT_MS);
+                    if (!res.ok) continue;
+                    const html = await res.text();
+
+                    if (!html.toLowerCase().includes('uafix')) continue;
+
+                    const linkRe = /<a\s+[^>]*href="(https?:\/\/uafix\.net\/[^"]+)"[^>]*title="Смотреть ([^"]+) онлайн"/gi;
+                    let match;
+                    while ((match = linkRe.exec(html)) !== null) {
+                        const variants = match[2].split('/').map(v => v.trim().toLowerCase());
+                        if (variants.includes(wanted)) {
+                            uafixCache.set(englishTitle, match[1]);
+                            return match[1];
+                        }
+                    }
+
+                    uafixCache.set(englishTitle, false);
+                    return false;
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            return null;
         }
 
         // ============================================================
@@ -555,16 +614,20 @@
                     ? `\nВАЖЛИВО: НЕ пропонуй ці фільми, вони вже були показані: ${exclusions.join('; ')}.`
                     : '';
 
-                // Із фільтром озвучки просимо більше фільмів — частина відсіється
                 const count = uafixOnly ? 24 : 16;
                 const popularityHint = uafixOnly
                     ? '\nВіддавай перевагу відомим і популярним фільмам — вони найімовірніше мають українську озвучку.'
                     : '';
 
+                // ШІ повертає англійську назву (для пошуку в базах)
+                // + українську назву (для показу) + опис українською
                 const prompt = `Підбери ${count} фільмів, які ідеально відповідають цим критеріям користувача (суворо дотримуйся років і жанру, якщо вказані).
 Критерії: Роки виходу: ${yearCriteria}, Жанр: ${genre || 'Будь-який'}, Побажання: ${wishes}.${exclusionText}${popularityHint}
-Поверни СУТО JSON-об'єкт з ключем "movies" — масивом об'єктів. Кожен об'єкт має містити два ключі: "title" (точна офіційна англійська назва для пошуку в базі) та "plot" (цікавий і детальний опис фільму УКРАЇНСЬКОЮ мовою, 3-4 речення).
-Приклад: {"movies": [{"title": "The Matrix", "plot": "Культовий фільм про хакера Нео..."}]}
+Поверни СУТО JSON-об'єкт з ключем "movies" — масивом об'єктів. Кожен об'єкт має містити три ключі:
+"title" — точна офіційна англійська назва для пошуку в базі,
+"title_ua" — офіційна українська назва фільму (та, під якою він відомий в українському прокаті; якщо офіційної немає — загальновживаний український переклад назви),
+"plot" — цікавий і детальний опис фільму УКРАЇНСЬКОЮ мовою, 3-4 речення.
+Приклад: {"movies": [{"title": "The Matrix", "title_ua": "Матриця", "plot": "Культовий фільм про хакера Нео..."}]}
 Жодного тексту поза JSON.`;
 
                 const rawText = await provider.call(prompt, aiKey);
@@ -579,7 +642,6 @@
                     throw new Error("ШІ не знайшов фільмів за цими критеріями. Спробуйте переформулювати побажання.");
                 }
 
-                // Дані OMDb для кожного фільму паралельно
                 const movieDataPromises = movieSuggestions.map(async (movie) => {
                     try {
                         const oResponse = await fetch(`https://www.omdbapi.com/?apikey=${omdbKey}&t=${encodeURIComponent(movie.title)}`);
@@ -589,6 +651,7 @@
                             return {
                                 ...oData,
                                 customPlot: movie.plot,
+                                titleUa: movie.title_ua || oData.Title, // українська назва від ШІ
                                 imdbRating: parseFloat(oData.imdbRating) || 0
                             };
                         }
@@ -600,7 +663,6 @@
 
                 let results = (await Promise.all(movieDataPromises)).filter(m => m !== null);
 
-                // Дублікати за imdbID
                 const seen = new Set();
                 results = results.filter(m => {
                     if (seen.has(m.imdbID)) return false;
@@ -608,23 +670,25 @@
                     return true;
                 });
 
-                // ------------------------------------------------------
-                // Перевірка української озвучки на UAfix (якщо увімкнено)
-                // ------------------------------------------------------
                 if (uafixOnly && results.length > 0) {
-                    loadingText.textContent = 'Перевіряю наявність озвучки на UAfix...';
+                    let done = 0;
+                    const total = results.length;
+                    loadingText.textContent = `Перевіряю озвучку на UAfix... 0/${total}`;
 
-                    const checks = await Promise.all(results.map(m => checkUafix(m.Title)));
+                    const checks = await mapLimit(results, UAFIX_CONCURRENCY, async (m) => {
+                        const r = await checkUafix(m.Title);
+                        done++;
+                        loadingText.textContent = `Перевіряю озвучку на UAfix... ${done}/${total}`;
+                        return r;
+                    });
                     results.forEach((m, i) => { m.uafixUrl = checks[i]; });
 
                     const failedChecks = checks.filter(c => c === null).length;
 
                     if (failedChecks === checks.length) {
-                        // Проксі повністю недоступне — показуємо все без фільтра
-                        alert("Не вдалося перевірити наявність на UAfix (сервіс перевірки недоступний). Показую підбірку без фільтра озвучки.");
+                        alert("Не вдалося перевірити наявність на UAfix (сервіси перевірки недоступні). Показую підбірку без фільтра озвучки.");
                         results.forEach(m => { m.uafixUrl = null; });
                     } else {
-                        // Залишаємо тільки знайдені на UAfix
                         results = results.filter(m => typeof m.uafixUrl === 'string');
                     }
                 }
@@ -649,6 +713,8 @@
 
         // ============================================================
         // Рендеринг карток
+        // Українська назва — заголовок, англійська — дрібним рядком.
+        // Опис показується повністю, без обрізання.
         // ============================================================
         function renderCards(movies, uafixOnly) {
             if (movies.length === 0) {
@@ -658,11 +724,13 @@
                 return;
             }
 
-            resultsGrid.innerHTML = movies.map(movie => `
+            resultsGrid.innerHTML = movies.map(movie => {
+                const trailerQuery = encodeURIComponent(`${movie.titleUa} трейлер українською`);
+                return `
                 <div class="bg-slate-800 rounded-2xl overflow-hidden border border-slate-700 transition-all duration-300 hover:-translate-y-2 hover:shadow-2xl flex flex-col h-full">
-                    <div class="relative h-72 overflow-hidden bg-slate-900">
+                    <div class="relative h-80 overflow-hidden bg-slate-900">
                         <img src="${movie.Poster !== 'N/A' ? movie.Poster : NO_POSTER}" 
-                             alt="${movie.Title}" 
+                             alt="${movie.titleUa}" 
                              onerror="this.src='${NO_POSTER}'"
                              loading="lazy"
                              class="w-full h-full object-cover">
@@ -675,9 +743,10 @@
                         </div>
                     </div>
                     <div class="p-5 flex flex-col flex-grow">
-                        <h3 class="font-bold text-lg leading-tight mb-1 line-clamp-1" title="${movie.Title}">${movie.Title}</h3>
-                        <p class="text-slate-400 text-sm mb-6">${movie.Year} • ${(movie.Genre || '').split(',')[0]}</p>
-                        <p class="text-slate-300 text-sm line-clamp-6 mb-6 leading-relaxed flex-grow">
+                        <h3 class="font-bold text-xl leading-tight mb-1">${movie.titleUa}</h3>
+                        <p class="text-slate-500 text-xs mb-1">${movie.Title}</p>
+                        <p class="text-slate-400 text-sm mb-4">${movie.Year} • ${translateGenre(movie.Genre)}</p>
+                        <p class="text-slate-300 text-sm mb-6 leading-relaxed flex-grow">
                             ${movie.customPlot}
                         </p>
                         <div class="space-y-2 mt-auto">
@@ -686,9 +755,9 @@
                                class="block w-full text-center bg-green-700 hover:bg-green-600 text-white text-xs font-semibold py-2 rounded-lg transition-colors">
                                ▶ Дивитись на UAfix
                             </a>` : ''}
-                            <a href="https://www.imdb.com/title/${movie.imdbID}/" target="_blank" 
-                               class="block w-full text-center bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold py-2 rounded-lg transition-colors">
-                               Детальніше на IMDb
+                            <a href="https://www.youtube.com/results?search_query=${trailerQuery}" target="_blank" 
+                               class="block w-full text-center bg-red-700 hover:bg-red-600 text-white text-xs font-semibold py-2 rounded-lg transition-colors">
+                               ▶ Трейлер на YouTube
                             </a>
                             <a href="https://www.themoviedb.org/search?query=${encodeURIComponent(movie.Title)}" target="_blank"
                                class="block w-full text-center border border-slate-600 hover:bg-slate-700 text-slate-300 text-xs font-semibold py-2 rounded-lg transition-colors">
@@ -697,7 +766,8 @@
                         </div>
                     </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
         }
     </script>
 </body>
