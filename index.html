@@ -141,9 +141,9 @@
                 <div>
                     <label class="block text-sm text-slate-400 mb-2">Провайдер ШІ</label>
                     <select id="provider-select" onchange="onProviderChange()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 outline-none focus:border-blue-500">
-                        <option value="groq">Groq — GPT-OSS 120B (точний і швидкий, рекомендовано)</option>
+                        <option value="openrouter">OpenRouter — Llama 4 Maverick (найточніше, рекомендовано)</option>
                         <option value="gemini">Google Gemini 3.5 Flash</option>
-                        <option value="openrouter">OpenRouter — безкоштовні моделі</option>
+                        <option value="groq">Groq — GPT-OSS 120B (найшвидший)</option>
                     </select>
                 </div>
 
@@ -200,7 +200,7 @@
         // ЗАШИФРОВАНІ КЛЮЧІ — замініть рядок нижче на ваш з keygen.html
         // Має бути рівно ОДНА декларація const ENCRYPTED_KEYS.
         // ============================================================
-        const ENCRYPTED_KEYS = "EYwZIcrGZeY6c0h/+T5tlrVUtmsczDpFamCpgnnQ0BJ1RYD1UqFUpFAsmt4SbsYXeacYZdILYHlCylpqsdaP0UBt53vwEZP5n9WuLyy1gE0nMBzGi8/xtZMRlp2zFWnene1FLuAqpAWwktV9KzRdYvDId2/Rsh//xNFIazg5zun9RtVGWiNXLdV+F0BHcj0HPWPYj7wdqAc5qWyg9bXkPo5f3n6xXLaNMCp2QnN/99i6uNVkncljRaUhYhO0d8n8lDmNAEJVrlrDwlYFZzODOpcBdil/bemNiSyqgSiMZo8bNU7pT/s=";
+        const ENCRYPTED_KEYS = "pjt4SDUweB5KYMekUF6k72QOcMkVfFwpQqG0v7W9wjpphwzCNYtMsMOd+ZrTCCpUZNw7X7z20Ebe5GHhguL1ZkBal7eJsJ3eveKtI4OvyIIoiBgGad+x+EiDyrl5HotPocn+d9jbyUNZUE6+pIMFelncfHMYfViroUSjK6iAVe+APa3iFOkUZ7E4wyLGlsmQ4O1+gitv+V5jO3GDeBSk7+QL/jJTQtLdu8n1c4H/EHprycSQ6lRKeu0a8upM0RZyXzc1u1pHUAQPwn8vwds5HG9taajDjB2qx8zUVnPht5OHuWkLRxpKaRUtHAvAWxX1FJnPs4zDFq81WmcIe1yvZU01Szo39M8hWvFVM8WJ3TjQAZGGcunyYeVLIWGqfP+fzVA4x1ZDi2KCJhYHB9MuoKR4vA==";
 
         // Пошук на UAfix відкривається у браузері відвідувача —
         // живу людину захист сайту пропускає без проблем
@@ -290,6 +290,9 @@
                             'X-Title': 'KinoVibe'
                         },
                         body: JSON.stringify({
+                            // Llama 4 Maverick — найбільша безкоштовна модель OpenRouter
+                            // (~400 млрд параметрів), найкраще "знання кіно" й українська.
+                            // Запасний варіант, якщо її знімуть: 'meta-llama/llama-3.3-70b-instruct:free'
                             model: 'meta-llama/llama-4-maverick:free',
                             messages: [{ role: 'user', content: prompt }],
                             temperature: 0.6
@@ -393,7 +396,7 @@
                 }
 
                 const keys = await decryptKeys(password);
-                localStorage.setItem('kv_provider', keys.provider || 'groq');
+                localStorage.setItem('kv_provider', keys.provider || 'openrouter');
                 localStorage.setItem('kv_key_omdb', keys.omdb || '');
                 localStorage.setItem('kv_key_groq', keys.groq || '');
                 localStorage.setItem('kv_key_gemini', keys.gemini || '');
@@ -419,7 +422,7 @@
         // Налаштування та ключі
         // ============================================================
         function loadSettingsToForm() {
-            document.getElementById('provider-select').value = localStorage.getItem('kv_provider') || 'groq';
+            document.getElementById('provider-select').value = localStorage.getItem('kv_provider') || 'openrouter';
             document.getElementById('key-omdb').value = localStorage.getItem('kv_key_omdb') || '';
             for (const [id, cfg] of Object.entries(PROVIDERS)) {
                 document.getElementById(`key-${id}`).value = localStorage.getItem(cfg.storageKey) || '';
@@ -460,7 +463,7 @@
         }
 
         function getActiveProvider() {
-            const id = localStorage.getItem('kv_provider') || 'groq';
+            const id = localStorage.getItem('kv_provider') || 'openrouter';
             return { id, ...PROVIDERS[id] };
         }
 
