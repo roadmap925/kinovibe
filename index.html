@@ -137,7 +137,7 @@
                     <label class="block text-sm text-slate-400 mb-2">Провайдер ШІ</label>
                     <select id="provider-select" onchange="onProviderChange()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 outline-none focus:border-blue-500">
                         <option value="groq">Groq — GPT-OSS 120B (точний і швидкий, рекомендовано)</option>
-                        <option value="gemini">Google Gemini 2.5 Flash</option>
+                        <option value="gemini">Google Gemini 3.5 Flash</option>
                         <option value="openrouter">OpenRouter — безкоштовні моделі</option>
                     </select>
                 </div>
@@ -254,7 +254,9 @@
                 label: 'Gemini',
                 storageKey: 'kv_key_gemini',
                 call: async (prompt, apiKey) => {
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+                    // gemini-3.5-flash — актуальна стабільна модель (GA);
+                    // 2.5 Flash закрито для нових користувачів у 2026
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`;
                     const res = await fetch(url, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
