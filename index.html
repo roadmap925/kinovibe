@@ -136,7 +136,7 @@
                 <div>
                     <label class="block text-sm text-slate-400 mb-2">Провайдер ШІ</label>
                     <select id="provider-select" onchange="onProviderChange()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 outline-none focus:border-blue-500">
-                        <option value="groq">Groq — Kimi K2 (точний і швидкий, рекомендовано)</option>
+                        <option value="groq">Groq — GPT-OSS 120B (точний і швидкий, рекомендовано)</option>
                         <option value="gemini">Google Gemini 2.5 Flash</option>
                         <option value="openrouter">OpenRouter — безкоштовні моделі</option>
                     </select>
@@ -235,9 +235,11 @@
                             'Authorization': `Bearer ${apiKey}`
                         },
                         body: JSON.stringify({
-                            // Kimi K2 — найкраще "знання кіно" серед безкоштовних моделей Groq.
-                            // Альтернатива, якщо ця модель стане недоступною: 'openai/gpt-oss-120b'
-                            model: 'moonshotai/kimi-k2-instruct-0905',
+                            // GPT-OSS 120B — найсильніша модель безкоштовного каталогу Groq
+                            // (Kimi K2 знято з підтримки 23.03.2026 на її користь).
+                            // reasoning_effort 'low' — швидка відповідь без зайвих витрат токенів
+                            model: 'openai/gpt-oss-120b',
+                            reasoning_effort: 'low',
                             messages: [{ role: 'user', content: prompt }],
                             response_format: { type: 'json_object' },
                             temperature: 0.6
@@ -654,4 +656,3 @@
     </script>
 </body>
 </html>
-
