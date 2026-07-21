@@ -141,8 +141,8 @@
                 <div>
                     <label class="block text-sm text-slate-400 mb-2">Провайдер ШІ</label>
                     <select id="provider-select" onchange="onProviderChange()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 outline-none focus:border-blue-500">
-                        <option value="openrouter">OpenRouter — Llama 4 Maverick (найточніше, рекомендовано)</option>
-                        <option value="gemini">Google Gemini 3.5 Flash</option>
+                        <option value="gemini">Google Gemini 3.5 Flash (найточніший, рекомендовано)</option>
+                        <option value="openrouter">OpenRouter — Llama 3.3 70B (стабільний резерв)</option>
                         <option value="groq">Groq — GPT-OSS 120B (найшвидший)</option>
                     </select>
                 </div>
@@ -290,10 +290,11 @@
                             'X-Title': 'KinoVibe'
                         },
                         body: JSON.stringify({
-                            // Llama 4 Maverick — найбільша безкоштовна модель OpenRouter
-                            // (~400 млрд параметрів), найкраще "знання кіно" й українська.
-                            // Запасний варіант, якщо її знімуть: 'meta-llama/llama-3.3-70b-instruct:free'
-                            model: 'meta-llama/llama-4-maverick:free',
+                            // Llama 3.3 70B — найстабільніша безкоштовна модель OpenRouter,
+                            // мультимовна (українську тримає добре), доступна найдовше.
+                            // Maverick переведено в платні 07.2026, тому взято цю.
+                            // Можна спробувати точнішу (якщо буде вільна): 'google/gemma-3-27b-it:free'
+                            model: 'meta-llama/llama-3.3-70b-instruct:free',
                             messages: [{ role: 'user', content: prompt }],
                             temperature: 0.6
                         })
@@ -396,7 +397,7 @@
                 }
 
                 const keys = await decryptKeys(password);
-                localStorage.setItem('kv_provider', keys.provider || 'openrouter');
+                localStorage.setItem('kv_provider', keys.provider || 'gemini');
                 localStorage.setItem('kv_key_omdb', keys.omdb || '');
                 localStorage.setItem('kv_key_groq', keys.groq || '');
                 localStorage.setItem('kv_key_gemini', keys.gemini || '');
@@ -422,7 +423,7 @@
         // Налаштування та ключі
         // ============================================================
         function loadSettingsToForm() {
-            document.getElementById('provider-select').value = localStorage.getItem('kv_provider') || 'openrouter';
+            document.getElementById('provider-select').value = localStorage.getItem('kv_provider') || 'gemini';
             document.getElementById('key-omdb').value = localStorage.getItem('kv_key_omdb') || '';
             for (const [id, cfg] of Object.entries(PROVIDERS)) {
                 document.getElementById(`key-${id}`).value = localStorage.getItem(cfg.storageKey) || '';
@@ -463,7 +464,7 @@
         }
 
         function getActiveProvider() {
-            const id = localStorage.getItem('kv_provider') || 'openrouter';
+            const id = localStorage.getItem('kv_provider') || 'gemini';
             return { id, ...PROVIDERS[id] };
         }
 
@@ -535,6 +536,67 @@
         }
 
         // ============================================================
+        // Автоперемикання провайдера
+        // Основний провайдер лишається головним, але якщо він
+        // перевантажений (high demand / overloaded / 429 / 503) або
+        // не відповів за 25 секунд — тихо пробуємо резервний.
+        // Порядок резерву: openrouter → groq (окрім активного).
+        // ============================================================
+
+        // Ознаки тимчасової помилки, за яких варто спробувати інший провайдер
+        function isTemporaryError(err) {
+            const m = (err && err.message ? err.message : '').toLowerCase();
+            return m.includes('high demand') || m.includes('overloaded')
+                || m.includes('rate limit') || m.includes('try again')
+                || m.includes('timeout') || m.includes('unavailable')
+                || m.includes('503') || m.includes('502') || m.includes('429')
+                || m.includes('capacity') || m.includes('temporarily');
+        }
+
+        // Виклик провайдера з обмеженням часу (щоб «довго шукає» теж
+        // рахувалося як привід перемкнутися)
+        function callWithTimeout(providerObj, prompt, apiKey, ms) {
+            return Promise.race([
+                providerObj.call(prompt, apiKey),
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('timeout: провайдер відповідає надто довго')), ms))
+            ]);
+        }
+
+        // Головна функція: пробує провайдерів по черзі.
+        // Повертає { text, usedProvider } або кидає останню помилку.
+        async function callAiWithFallback(prompt, primaryId) {
+            // Черга: спершу основний, далі резервні (для яких є ключ)
+            const order = [primaryId, 'openrouter', 'gemini', 'groq']
+                .filter((v, i, arr) => arr.indexOf(v) === i); // прибрати дублікати
+
+            let lastError = null;
+            for (let i = 0; i < order.length; i++) {
+                const id = order[i];
+                const p = PROVIDERS[id];
+                const key = localStorage.getItem(p.storageKey);
+                if (!key) continue; // немає ключа — пропускаємо цього провайдера
+
+                // Для резервних показуємо, що перемкнулися
+                if (i > 0) {
+                    loadingText.textContent = `Основний провайдер зайнятий — пробую ${p.label}...`;
+                }
+
+                try {
+                    const text = await callWithTimeout(p, prompt, key, 25000);
+                    if (text) return { text, usedProvider: p.label, switched: i > 0 };
+                    lastError = new Error(`${p.label}: порожня відповідь`);
+                } catch (e) {
+                    lastError = e;
+                    // Якщо помилка НЕ тимчасова (напр. невірний ключ) — далі пробувати
+                    // резерв усе одно варто, тож просто продовжуємо цикл
+                    console.warn(`Провайдер ${p.label} не спрацював:`, e.message);
+                }
+            }
+            throw lastError || new Error('Жоден провайдер не відповів.');
+        }
+
+        // ============================================================
         // Головна функція пошуку
         // ============================================================
         async function findMovies() {
@@ -586,7 +648,9 @@
 Приклад: {"movies": [{"title": "The Matrix", "title_ua": "Матриця", "plot": "Культовий фільм про хакера Нео..."}]}
 Жодного тексту поза JSON.`;
 
-                const rawText = await provider.call(prompt, aiKey);
+                // Пробуємо основний провайдер, за потреби — резервний
+                const aiResult = await callAiWithFallback(prompt, provider.id);
+                const rawText = aiResult.text;
                 if (!rawText) {
                     throw new Error("ШІ повернув порожню відповідь. Спробуйте ще раз або змініть провайдера в ⚙️.");
                 }
