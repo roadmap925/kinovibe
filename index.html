@@ -245,6 +245,9 @@
                             // reasoning_effort 'low' — швидка відповідь без зайвих витрат токенів
                             model: 'openai/gpt-oss-120b',
                             reasoning_effort: 'low',
+                            // Ліміт відповіді 6000: разом із промптом (~500 токенів)
+                            // влазить у безкоштовний ліміт Groq 8000 токенів/хвилину
+                            max_completion_tokens: 6000,
                             messages: [{ role: 'user', content: prompt }],
                             response_format: { type: 'json_object' },
                             temperature: 0.6
@@ -506,10 +509,26 @@
             const cleaned = text.replace(/```json|```/g, '').trim();
             const start = cleaned.indexOf('{');
             const end = cleaned.lastIndexOf('}');
-            if (start === -1 || end === -1 || end <= start) {
+            if (start === -1) {
                 throw new Error("ШІ повернув відповідь у неочікуваному форматі. Спробуйте ще раз.");
             }
-            return JSON.parse(cleaned.slice(start, end + 1));
+
+            // Спроба 1: розпарсити як є
+            const jsonStr = cleaned.slice(start, end === -1 ? cleaned.length : end + 1);
+            try {
+                return JSON.parse(jsonStr);
+            } catch (e) {
+                // Спроба 2: відповідь обірвалася на середині (ліміт токенів) —
+                // відрізаємо незавершений останній об'єкт і закриваємо масив.
+                // Кінець останнього ЦІЛОГО фільму — це послідовність «"}»
+                const lastComplete = jsonStr.lastIndexOf('"}');
+                if (lastComplete !== -1) {
+                    try {
+                        return JSON.parse(jsonStr.slice(0, lastComplete + 2) + ']}');
+                    } catch (e2) { /* переходимо до помилки нижче */ }
+                }
+                throw new Error("ШІ повернув пошкоджений JSON. Спробуйте ще раз.");
+            }
         }
 
         // ============================================================
@@ -560,7 +579,7 @@
 Поверни СУТО JSON-об'єкт з ключем "movies" — масивом об'єктів. Кожен об'єкт має містити три ключі:
 "title" — точна офіційна англійська назва для пошуку в базі,
 "title_ua" — офіційна українська назва фільму (та, під якою він відомий в українському прокаті; якщо офіційної немає — загальновживаний український переклад назви),
-"plot" — цікавий і детальний опис фільму УКРАЇНСЬКОЮ мовою, 3-4 речення.
+"plot" — цікавий опис фільму УКРАЇНСЬКОЮ мовою, 2-3 речення.
 Приклад: {"movies": [{"title": "The Matrix", "title_ua": "Матриця", "plot": "Культовий фільм про хакера Нео..."}]}
 Жодного тексту поза JSON.`;
 
