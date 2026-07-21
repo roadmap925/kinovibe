@@ -353,7 +353,9 @@
         }
 
         async function decryptKeys(password) {
-            const data = b64ToBytes(ENCRYPTED_KEYS);
+            // Прибираємо пробіли й переноси рядків, які могли потрапити
+            // в блок під час копіювання — вони ламають Base64
+            const data = b64ToBytes(ENCRYPTED_KEYS.replace(/\s+/g, ''));
             const salt = data.slice(0, 16);
             const iv = data.slice(16, 28);
             const ciphertext = data.slice(28);
@@ -371,6 +373,17 @@
             btn.disabled = true;
 
             try {
+                // Спершу перевіряємо цілісність самого блоку:
+                // якщо Base64 пошкоджено, це НЕ помилка пароля
+                try {
+                    const check = b64ToBytes(ENCRYPTED_KEYS.replace(/\s+/g, ''));
+                    if (check.length < 29) throw new Error('too short');
+                } catch (corrupt) {
+                    errorEl.textContent = 'Зашифрований блок пошкоджено. Адміністратору потрібно оновити рядок ENCRYPTED_KEYS у файлі.';
+                    errorEl.classList.remove('hidden');
+                    return;
+                }
+
                 const keys = await decryptKeys(password);
                 localStorage.setItem('kv_provider', keys.provider || 'groq');
                 localStorage.setItem('kv_key_omdb', keys.omdb || '');
@@ -381,6 +394,7 @@
                 updateStatus();
                 unlockModal.classList.add('hidden');
             } catch (e) {
+                errorEl.textContent = 'Невірний пароль. Спробуйте ще раз.';
                 errorEl.classList.remove('hidden');
             } finally {
                 btn.textContent = 'Відкрити доступ';
